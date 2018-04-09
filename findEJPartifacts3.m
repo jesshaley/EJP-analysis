@@ -1,0 +1,160 @@
+function [artifact] = findEJPartifacts3(Vm,time,ind_startEJP,ind_peakEJP,displayArtifact)
+% Finds and returns movement artifacts in EJP recordings
+%   INPUTS:
+%       Vm: membrane potential trace (mV)
+%       time: array of time points
+%       ind_startEJP: indices of EJP starts
+%       ind_peakEJP: indices of EJP peaks
+%       displayArtifact: choose 'on' or 'off' to plot artifacts
+%   OUTPUTS:
+%       ind_artifact: indices of movement artifacts
+
+sampling_freq = 1/time(2); % sampling frequency (Hz)
+
+time_startEJP = time(ind_startEJP);
+time_peakEJP = time(ind_peakEJP);
+Vm_startEJP = Vm(ind_startEJP);
+Vm_peakEJP = Vm(ind_peakEJP);
+
+Vm_EJP = Vm_peakEJP - Vm_startEJP;
+time_EJP = time_peakEJP - time_startEJP;
+
+%% Find index of first and last EJP in putative bursts
+
+Vm_diff = diff(Vm(ind_startEJP)');
+ind_diff = diff(ind_startEJP);
+not_decayed = find(ind_diff < sampling_freq/1.9 & abs(Vm_diff) > 0.2 | ind_diff < sampling_freq/5)+1;
+firstEJP = [1:length(ind_startEJP)]; firstEJP(not_decayed) = [];
+lastEJP = [firstEJP(2:end)-1,length(ind_startEJP)];
+
+%% Remove EJPs within burst that are too low (artifacts)
+
+artifact1 = [];
+for i = 1:length(firstEJP)
+    in_burst = [firstEJP(i):lastEJP(i)];
+    remove = [];
+    if length(in_burst) > 1
+        remove = find(Vm_startEJP(in_burst(2:end)) < Vm_startEJP(firstEJP(i))+1.1...
+            & Vm_peakEJP(in_burst(2:end)) < Vm_startEJP(firstEJP(i)) + 2)+1;
+%     elseif length(in_burst) == 1 & Vm_startEJP(firstEJP(i)) > Vm_peakEJP(firstEJP(i)) - 0.02
+%         remove = in_burst(i);
+
+%         for j = 2:length(in_burst)
+%             duration = ind_peakEJP(j) - ind_startEJP(1);
+%             if duration > sampling_freq/1.25
+%                 artifact = [artifact,firstEJP(i)+j-1];
+%             end
+%         end
+    end
+    if ~isempty(remove)
+        artifact1 = [artifact1,in_burst(remove)];
+    end
+end
+
+%% Remove EJPs that are at the end of a burst and decay too slow
+
+Vm_decay63 = (1-(1/exp(1))) * (Vm(ind_peakEJP(lastEJP))-Vm(ind_startEJP(firstEJP)));
+Vm_decay = Vm(ind_peakEJP(lastEJP)) - Vm_decay63;
+
+artifact2 = [];
+for i = 1:length(lastEJP)
+    if ind_peakEJP(lastEJP(i)) > length(Vm) - sampling_freq/5; % within 200 ms from end of file
+        test_Vm = Vm(end); % test last index of file
+    else
+        test_Vm = Vm(ind_peakEJP(lastEJP(i))+sampling_freq/5); % test 200 ms after EJP peak
+    end
+    if test_Vm > Vm_decay(i)
+        artifact2 = [artifact2,lastEJP(i)];
+    end
+end
+
+%% Remove EJPs with super slow decay time (only for giant Artifacts)
+
+artifact3 = [];
+Vm_decay63 = (1-(1/exp(1))) * (Vm(ind_peakEJP)-Vm(ind_startEJP));
+Vm_decay = Vm(ind_peakEJP) - Vm_decay63;
+
+for i = 1:length(ind_startEJP)
+    data_decay = Vm(ind_peakEJP(i):length(Vm));
+    if isempty(find(data_decay < Vm_decay(i)))
+        artifact3 = [artifact3,i];
+    elseif (min(find(data_decay < Vm_decay(i))) > 0.75*sampling_freq...
+            && Vm_peakEJP(i) < mean(Vm(ind_peakEJP(i)+1000:ind_peakEJP(i)+1200))) % Vm is still rising after peak
+        artifact3 = [artifact3,i];
+    end
+end
+
+%% Remove things that look like artifacts for multiple reasons
+
+artifact4 = [];
+% for i = 2:length(ind_peakEJP)-1
+%     if ((Vm_peakEJP(i) < min(Vm) + 10)... % peak amp < 10 mV above baseline
+%             || time_peakEJP(i) - time_startEJP(i) > 0.28... % rise time is > 0.4 s
+%             || time_startEJP(i) - time_startEJP(i-1) > 0.3)... % > 0.3 s lag between last EJP
+%             && time_peakEJP(i)+1.5 < time_startEJP(i+1)... % >1.5 seconds from peak to next EJP
+%             && abs(Vm_EJP(i) - quantile(Vm_EJP,0.75)) > std(Vm_EJP) %% significantly larger or smaller than 4th quantile
+%         artifact4 = [artifact4,i];
+%     end
+% end
+
+%% Find ones with burst durations that are too long!
+
+too_long = 1;
+artifact5 = [];
+% while ~isempty(too_long)
+%     duration = ind_peakEJP(lastEJP) - ind_startEJP(firstEJP);
+%     too_long = [];
+%     too_long = find(duration > sampling_freq/1.25);
+%     artifact5 = [artifact5,lastEJP(too_long)];
+%     Vm_startEJP2 = Vm_startEJP; ind_startEJP2(artifact5) = NaN;
+%     ind_startEJP2 = ind_startEJP; ind_startEJP2(artifact5) = NaN;
+%     Vm_diff2 = diff(Vm_startEJP2)';
+%     ind_diff2 = diff(ind_startEJP2);
+%     not_decayed = find(ind_diff2 < sampling_freq/1.9 & abs(Vm_diff2) > 0.2 | ind_diff2 < sampling_freq/5)+1;
+%     firstEJP = [1:length(ind_startEJP2)]; firstEJP(not_decayed) = [];
+%     lastEJP = [firstEJP(2:end)-1,length(ind_startEJP2)];
+% end
+
+% figure
+% hold on
+% plot(Vm,'k')
+% scatter(ind_peakEJP,Vm_peakEJP,'k')
+% scatter(ind_peakEJP(artifact1),Vm_peakEJP(artifact1),'b')
+% scatter(ind_peakEJP(artifact2),Vm_peakEJP(artifact2),'c')
+% scatter(ind_peakEJP(artifact3),Vm_peakEJP(artifact3),'g')
+% scatter(ind_peakEJP(artifact4),Vm_peakEJP(artifact4),'y')
+% scatter(ind_peakEJP(artifact5),Vm_peakEJP(artifact5),'r')
+
+artifact = unique([artifact1,artifact2,artifact3,artifact4,artifact5]);
+
+%% Plot
+
+if strcmp(displayArtifact,'on')
+    figure
+    subplot(2,2,1)
+    hold on
+    scatter(time_startEJP,Vm_EJP,'k')
+    scatter(time_startEJP(artifact),Vm_EJP(artifact),'b')
+    xlim([0 time(end)])
+    xlabel('EJP Start Time (s)')
+    ylabel('EJP Amplitude (mV)')
+    
+    subplot(2,2,3)
+    hold on
+    scatter(time_startEJP,time_EJP,'k')
+    scatter(time_startEJP(artifact),time_EJP(artifact),'b')
+    xlim([0 time(end)])
+    xlabel('EJP Start Time (s)')
+    ylabel('EJP Time from Start to Peak (s)')
+    
+    subplot(2,2,[2,4])
+    hold on
+    scatter(time_EJP,Vm_EJP,'k')
+    s_art = scatter(time_EJP(artifact),Vm_EJP(artifact),'b')
+    xlabel('EJP Time from Start to Peak (s)')
+    ylabel('EJP Amplitude (mV)')
+    legend([s_art],{'Artifact'},'Box','off','Location','Northwest')
+end
+
+end
+
